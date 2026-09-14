@@ -1207,11 +1207,16 @@ uint32_t FindSelectionMerge(const Graph& graph, const BasicBlock& block) {
 				}
 				// A return can leave a selection without reaching its merge. Keep the
 				// continuing arm as the merge instead of joining live state with a return.
-				if (graph.Dominates(block.id, false_target) &&
+
+				// The dominance check belongs on the returning arm itself (it must be this
+				// header's own private exit, not shared with an ancestor -- that case is
+				// IsEnclosingLinearExit's job above); the continuing arm is free to also be
+				// reachable from outside this header, same as any ordinary shared merge.
+				if (graph.Dominates(block.id, true_target) &&
 				    HasLinearPathToTerminal(graph, true_target)) {
 					return false_target;
 				}
-				if (graph.Dominates(block.id, true_target) &&
+				if (graph.Dominates(block.id, false_target) &&
 				    HasLinearPathToTerminal(graph, false_target)) {
 					return true_target;
 				}
@@ -1445,6 +1450,15 @@ std::vector<uint32_t> SelectionRegion(const Graph& graph, const BasicBlock& head
 		}
 		const auto* block = graph.FindBlock(block_id);
 		if (block == nullptr) {
+			continue;
+		}
+        // A block not dominated by the header is reached by some path that never goes
+		// through the header at all, so it can't be part of this selection's construct --
+		// it's shared code the selection merely joins, not a block requiring a private
+		// entry. Leave it (and anything only reachable through it) out of the region;
+		// walking into it here previously produced false "externally entered" failures
+		// for ordinary early-exit chains that skip ahead to a shared join block.
+		if (!graph.Dominates(header.id, block_id)) {
 			continue;
 		}
 		// A return terminates its own block; a branch to a shared return still has to
